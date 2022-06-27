@@ -238,6 +238,8 @@ public static class EcsClientEngine
             return;
         }
 
+        ImGui.DockSpaceOverViewport();
+
         foreach (var (name, mouse) in _mouses)
         {
             if (name != Username)
@@ -418,6 +420,8 @@ public static class EcsClientEngine
         {
             LoadAssets();
             ImGuiEngine.Install(gw);
+
+            ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.DockingEnable;
         };
         gw.RenderFrame += (sender, args) =>
         {
