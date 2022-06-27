@@ -1,8 +1,10 @@
+using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
 using System.Reflection;
 using ImGuiNET;
 using Mvtt.Core.Assets;
+using Mvtt.Core.Components;
 using Mvtt.Core.Packets;
 using Mvtt.Core.UI;
 using Newtonsoft.Json;
@@ -44,6 +46,7 @@ public static class EcsClientEngine
     private static TcpClient _client;
     private static Dictionary<int, Type> _packets = new();
 
+
     private static void Load()
     {
         //we will cache components fields for the query system
@@ -84,10 +87,21 @@ public static class EcsClientEngine
         }
     }
 
+    private static object _packetLocker = new object();
+
     private static void SendPacket(Packet p)
     {
-        bw.Write(p.Id);
-        p.Write(bw);
+        lock (_packetLocker)
+        {
+            try
+            {
+                bw.Write(p.Id);
+                p.Write(bw);
+            }
+            catch (Exception e)
+            {
+            }
+        }
     }
 
     private static bool IsValidSystemMethod(ParameterInfo[] param)
@@ -122,6 +136,11 @@ public static class EcsClientEngine
         foreach (var comp in comps)
         {
             comp.Guid = guid;
+            var p = new UpdateOrCreateComponentPacket();
+            p.ComponentType = comp.GetType().ToString();
+            p.ComponentJson = JsonConvert.SerializeObject(comp);
+
+            SendPacket(p);
         }
 
         lock (_locker)
@@ -148,6 +167,8 @@ public static class EcsClientEngine
 
     public static void LoginUi()
     {
+        var notValidUsername = string.IsNullOrEmpty(Username);
+
         // ImGui.ShowDemoWindow();
         var io = ImGui.GetIO();
 
@@ -165,22 +186,44 @@ public static class EcsClientEngine
 
         ImGui.SetWindowPos((displaySize / 2) - (windowSize / 2));
 
+
         ImGui.Text("Login");
+
+        if (notValidUsername)
+        {
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, 0xFF0000FF);
+        }
+
         ImGui.InputText("Name", ref Username, 255);
+        if (notValidUsername)
+        {
+            ImGui.PopStyleColor();
+        }
 
         ImGui.Combo("PlayerType", ref SelectedType, PlayerTypes, PlayerTypes.Length);
-        ImGui.BeginPopup("Bad uysername");
 
-        ImGui.End();
+
         if (ImGui.Button("Login", new Vector2(-1, 0)))
         {
-            if (string.IsNullOrEmpty(Username))
+            if (notValidUsername)
             {
-               
             }
             else
             {
+                File.WriteAllText("username.txt", Username);
                 LoggedIn = true;
+
+                CreateNewEntity(new PlayerComponent()
+                {
+                    Username = Username,
+                    PlayerType = PlayerType
+                });
+
+                var loginP = new LoginPacket();
+                loginP.Username = Username;
+                loginP.PlayerType = PlayerType;
+
+                SendPacket(loginP);
             }
         }
 
@@ -193,6 +236,16 @@ public static class EcsClientEngine
         {
             LoginUi();
             return;
+        }
+
+        foreach (var (name, mouse) in _mouses)
+        {
+            if (name != Username)
+            {
+                var g = ImGui.GetForegroundDrawList();
+                g.AddCircleFilled(new Vector2(mouse.X, mouse.Y), 2, 0xFFFFFFFF);
+                g.AddText(new Vector2(mouse.X, mouse.Y), 0xFFFFFFFF, name);
+            }
         }
 
         ImGui.Text($"Total Components: {Components.Count}");
@@ -266,6 +319,7 @@ public static class EcsClientEngine
 
     private static BinaryReader br;
     private static BinaryWriter bw;
+    private static Dictionary<string, MousePacket> _mouses { get; set; } = new();
 
     private static void NetworkThread()
     {
@@ -305,6 +359,25 @@ public static class EcsClientEngine
                         }
 
                         break;
+                    case DeleteComponentPacket dcp:
+                        lock (Components)
+                        {
+                            var t = Type.GetType(dcp.Type);
+                            Components.RemoveAll(x => x.GetType() == t && x.Guid == dcp.ComponentId);
+                        }
+
+                        break;
+                    case MousePacket mousePacket:
+                        if (!_mouses.ContainsKey(mousePacket.Username))
+                        {
+                            _mouses.Add(mousePacket.Username, mousePacket);
+                        }
+                        else
+                        {
+                            _mouses[mousePacket.Username] = mousePacket;
+                        }
+
+                        break;
                 }
             }
 
@@ -312,12 +385,29 @@ public static class EcsClientEngine
         }
     }
 
+    private static MousePacket _mouse = new MousePacket();
+
     public static void Start()
     {
-        _client = new TcpClient("127.0.0.1", 6969);
+        var ip = Dns.GetHostEntry("mvtt.myvar.cloud").AddressList[0].ToString();
+        _client = new TcpClient(ip, 6969);
 
 
         ThreadPool.QueueUserWorkItem((state) => { NetworkThread(); });
+        ThreadPool.QueueUserWorkItem((state) =>
+        {
+            while (true)
+            {
+                if (_client.Connected && LoggedIn)
+                    SendPacket(_mouse);
+                Thread.Sleep(150);
+            }
+        });
+
+        if (File.Exists("username.txt"))
+        {
+            Username = File.ReadAllText("username.txt");
+        }
 
         var gw = new GameWindow();
         gw.Title = "Myvar Virtual Table Top";
@@ -337,6 +427,13 @@ public static class EcsClientEngine
             ImGuiEngine.RenderFrame(TickUi, gw);
 
             gw.SwapBuffers();
+        };
+
+        gw.MouseMove += (sender, args) =>
+        {
+            _mouse.X = args.X;
+            _mouse.Y = args.Y;
+            _mouse.Username = Username;
         };
 
         gw.Run();

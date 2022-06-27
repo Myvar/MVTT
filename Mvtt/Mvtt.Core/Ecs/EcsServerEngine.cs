@@ -2,6 +2,7 @@ using System.Collections;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using Mvtt.Core.Components;
 using Mvtt.Core.Demo.Components;
 using Mvtt.Core.Packets;
 using Mvtt.Core.UI;
@@ -16,6 +17,10 @@ public class NetworkClient : IDisposable
     public NetworkStream NetworkStream { get; set; }
     public BinaryReader Reader { get; set; }
     public BinaryWriter Writer { get; set; }
+
+    public string Username { get; set; }
+    public string PlayerType { get; set; }
+    public bool Logedin { get; set; }
 
     public NetworkClient(TcpClient client)
     {
@@ -271,26 +276,29 @@ public static class EcsServerEngine
         }
 
 
-        foreach (var component in Components)
+        lock (_locker)
         {
-            if (component is PhysicalComponent pc)
+            foreach (var component in Components)
             {
-            }
-
-            if (component.HasChanged)
-            {
-                lock (_locker)
+                if (component is PhysicalComponent pc)
                 {
-                    //here we can send a network update
+                }
 
-
-                    BroadcastPacket(new UpdateOrCreateComponentPacket()
+                if (component.HasChanged)
+                {
+                    lock (_locker)
                     {
-                        ComponentType = component.GetType().ToString(),
-                        ComponentJson = JsonConvert.SerializeObject(component)
-                    });
+                        //here we can send a network update
 
-                    component.HasChanged = false;
+
+                        BroadcastPacket(new UpdateOrCreateComponentPacket()
+                        {
+                            ComponentType = component.GetType().ToString(),
+                            ComponentJson = JsonConvert.SerializeObject(component)
+                        });
+
+                        component.HasChanged = false;
+                    }
                 }
             }
         }
@@ -305,17 +313,70 @@ public static class EcsServerEngine
         }
     }
 
+    private static object _packetLocker = new object();
+
     private static void SendPacket(NetworkClient client, Packet p)
     {
-        client.Writer.Write(p.Id);
-        p.Write(client.Writer);
+        if (!client.Logedin)
+        {
+            return;
+        }
+
+        /*if (!(p is UpdateOrCreateComponentPacket))
+        {
+            Console.WriteLine($"Sending {p.GetType().Name.Split('.').Last()} to {client.Username}");
+
+            foreach (var property in p.GetType().GetProperties())
+            {
+                var val = property.GetValue(p);
+                Console.WriteLine($"\t{property.Name} = {val}");
+            }
+        }*/
+        lock (_packetLocker)
+        {
+            try
+            {
+                client.Writer.Write(p.Id);
+                p.Write(client.Writer);
+            }
+            catch (Exception e)
+            {
+            }
+        }
+    }
+
+    private static void DeleteComponent(Component c)
+    {
+        if (c == null)
+            return;
+        lock (_locker)
+        {
+            Components.Remove(c);
+        }
+
+        var deleteP = new DeleteComponentPacket();
+        deleteP.Type = c.GetType().ToString();
+        deleteP.ComponentId = c.Guid;
+
+        BroadcastPacket(deleteP);
     }
 
     private static void NetworkTick()
     {
+        var toDelete = new List<NetworkClient>();
+
         //handel incomming packets here
         foreach (var client in _clients)
         {
+            if (!client.Client.Connected)
+            {
+                DeleteComponent(
+                    Components.FirstOrDefault(x => x is PlayerComponent pc && pc.Username == client.Username));
+                toDelete.Add(client);
+                Console.WriteLine($"Deleteing Tcp Client: {client.Username}");
+                break;
+            }
+
             if (client.NetworkStream.DataAvailable)
             {
                 var id = client.Reader.ReadInt32();
@@ -331,7 +392,6 @@ public static class EcsServerEngine
                         {
                             var comp = (Component)JsonConvert.DeserializeObject(ucp.ComponentJson,
                                 Type.GetType(ucp.ComponentType)!)!;
-
                             if (Components.All(x =>
                                     !(x.Guid == comp.Guid && x.GetType().ToString() == ucp.ComponentType)))
                             {
@@ -345,11 +405,36 @@ public static class EcsServerEngine
                             }
                         }
 
-                        SendPacket(client, ucp);
+                        BroadcastPacket(ucp);
 
+                        break;
+                    case LoginPacket lp:
+                        client.Username = lp.Username;
+                        client.PlayerType = lp.PlayerType;
+                        client.Logedin = true;
+
+                        Console.WriteLine($"Logged in {client.Username}");
+
+                        foreach (var component in Components)
+                        {
+                            SendPacket(client, new UpdateOrCreateComponentPacket()
+                            {
+                                ComponentType = component.GetType().ToString(),
+                                ComponentJson = JsonConvert.SerializeObject(component)
+                            });
+                        }
+
+                        break;
+                    case MousePacket:
+                        BroadcastPacket(packet);
                         break;
                 }
             }
+        }
+
+        foreach (var client in toDelete)
+        {
+            _clients.Remove(client);
         }
     }
 
@@ -407,15 +492,6 @@ public static class EcsServerEngine
                 var client = new NetworkClient(_listener.AcceptTcpClient());
 
                 _clients.Add(client);
-
-                foreach (var component in Components)
-                {
-                    SendPacket(client, new UpdateOrCreateComponentPacket()
-                    {
-                        ComponentType = component.GetType().ToString(),
-                        ComponentJson = JsonConvert.SerializeObject(component)
-                    });
-                }
             }
         });
         ThreadPool.QueueUserWorkItem((state) =>

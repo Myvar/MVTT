@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 
 namespace Mvtt.Core;
@@ -5,6 +6,11 @@ namespace Mvtt.Core;
 public static class NetworkFileSystem
 {
     public static string Ip { get; set; } = "127.0.0.1";
+
+    static NetworkFileSystem()
+    {
+        Ip = Dns.GetHostEntry("mvtt.myvar.cloud").AddressList[0].ToString();
+    }
     public static int Port { get; set; } = 6970;
     public static int QueryPort { get; set; } = 6969;
 
