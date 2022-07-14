@@ -4,6 +4,13 @@ using Mvtt.Core.Core;
 using Mvtt.Core.Demo.Components;
 using Mvtt.Core.Ecs;
 
+var card = EcsServerEngine.CreateNewEntity(
+    new CardComponent()
+    {
+        Front = "Front",
+        Back = "Back",
+    });
+
 var guidA = EcsServerEngine.CreateNewEntity(
     new TransponderComponent()
     {
