@@ -154,12 +154,16 @@ public static class EcsClientEngine
     private static BasicTexture _texture { get; set; }
     public static BasicTexture Front { get; set; }
     public static BasicTexture Back { get; set; }
+    public static BasicTexture SectorMap { get; set; }
+    public static BasicTexture RanchMap { get; set; }
 
     private static void LoadAssets()
     {
         _texture = new BasicTexture("myvar", "DevTexture/uv_1.png");
         Front = new BasicTexture("myvar", "DevTexture/altdev_generic01.png");
         Back = new BasicTexture("myvar", "DevTexture/altdev_generic03.png");
+        SectorMap = new BasicTexture("myvar", "sector-map.jpg");
+        RanchMap = new BasicTexture("myvar", "ranch.png");
     }
 
     public static bool LoggedIn { get; set; }
@@ -254,11 +258,19 @@ public static class EcsClientEngine
             }
         }
 
-        ImGui.Text($"Total Components: {Components.Count}");
-        ImGui.Text($"Username: {Username}");
-        ImGui.Text($"PlayerType: {PlayerType}");
+        if (ImGui.Begin("Debug Info"))
+        {
+            ImGui.Text($"Total Components: {Components.Count}");
+            ImGui.Text($"Username: {Username}");
+            ImGui.Text($"PlayerType: {PlayerType}");
 
-        ImGui.Image((IntPtr)_texture.TextureId, new Vector2(100, 100));
+            ImGui.Image((IntPtr)_texture.TextureId, new Vector2(100, 100));
+            ImGui.End();
+        }
+
+        
+        
+        
         ImGui.ShowDemoWindow();
 
 

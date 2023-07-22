@@ -21,4 +21,8 @@
         <PackageReference Include="System.Drawing.Common" Version="4.7.0-preview3.19551.4" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="StarsWithOutNumber\Systems\" />
+    </ItemGroup>
+
 </Project>
